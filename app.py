@@ -1,3 +1,4 @@
+import re
 import streamlit as st
 import pandas as pd
 import datetime
@@ -34,34 +35,55 @@ batch_size_val = st.sidebar.number_input("Tamaño de Lote:", min_value=10, max_v
 st.sidebar.markdown("---")
 st.sidebar.info("""
 **Instrucciones:**
-1. Cargar archivo Excel (.xlsx, .xls) o CSV.
-2. Seleccionar columna conteniendo RUCs.
+1. Seleccionar la modalidad (Cargar Archivo o Pegar RUCs Directos).
+2. Proporcionar o pegar los RUCs.
 3. Verificar la validación y deduplicación.
 4. Iniciar o reanudar la consulta.
 5. Descargar el reporte consolidado en Excel.
 """)
 
-# File Uploader
-uploaded_file = st.file_uploader("Cargar archivo Excel o CSV", type=["xlsx", "xls", "csv", "txt"])
+# Input Mode Selection
+input_mode = st.radio(
+    "Seleccionar Método de Entrada:",
+    ["📁 Cargar Archivo Excel / CSV", "📋 Pegar RUCs Directamente"],
+    horizontal=True
+)
 
-if uploaded_file is not None:
+raw_rucs = []
+
+if input_mode == "📁 Cargar Archivo Excel / CSV":
+    uploaded_file = st.file_uploader("Cargar archivo Excel o CSV", type=["xlsx", "xls", "csv", "txt"])
+    if uploaded_file is not None:
+        try:
+            df, columns = load_ruc_file(uploaded_file, file_name=uploaded_file.name)
+            st.success(f"Archivo cargado correctamente: `{uploaded_file.name}` ({len(df)} filas)")
+
+            col_select_1, col_select_2 = st.columns([2, 1])
+            with col_select_1:
+                detected_col = auto_detect_ruc_column(columns)
+                selected_column = st.selectbox("Seleccionar Columna con RUC:", columns, index=columns.index(detected_col) if detected_col in columns else 0)
+
+            with col_select_2:
+                st.write("")
+                st.write("")
+                st.info(f"Columna activa: `{selected_column}`")
+
+            raw_rucs = extract_ruc_column(df, selected_column)
+        except Exception as e:
+            st.error(f"Error procesando el archivo: {str(e)}")
+
+else:
+    pasted_text = st.text_area(
+        "Pegar RUCs aquí (pueden estar separados por saltos de línea, comas o espacios):",
+        height=150,
+        placeholder="Ejemplo:\n20131312955\n20100000001\n20500000002"
+    )
+    if pasted_text.strip():
+        # Split by newlines, commas, semicolons, tabs or spaces
+        raw_rucs = [r.strip() for r in re.split(r'[\n\r,;\t\s]+', pasted_text) if r.strip()]
+
+if raw_rucs:
     try:
-        df, columns = load_ruc_file(uploaded_file, file_name=uploaded_file.name)
-
-        st.success(f"Archivo cargado correctamente: `{uploaded_file.name}` ({len(df)} filas)")
-
-        col_select_1, col_select_2 = st.columns([2, 1])
-        with col_select_1:
-            detected_col = auto_detect_ruc_column(columns)
-            selected_column = st.selectbox("Seleccionar Columna con RUC:", columns, index=columns.index(detected_col) if detected_col in columns else 0)
-
-        with col_select_2:
-            st.write("")
-            st.write("")
-            st.info(f"Columna activa: `{selected_column}`")
-
-        # Extract and validate RUCs
-        raw_rucs = extract_ruc_column(df, selected_column)
         val_res = process_ruc_list(raw_rucs)
 
         # Display Metrics
@@ -167,4 +189,4 @@ if uploaded_file is not None:
                 )
 
     except Exception as e:
-        st.error(f"Error procesando el archivo: {str(e)}")
+        st.error(f"Error procesando la solicitud: {str(e)}")
