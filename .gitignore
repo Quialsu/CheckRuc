@@ -1,0 +1,15 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# SQLite Databases & Checkpoints
+data/checkpoints/*.db
+*.db
+
+# Output exports & logs
+output/exports/*.xlsx
+output/logs/*.log
+*.xlsx
