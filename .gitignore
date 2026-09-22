@@ -5,9 +5,12 @@ __pycache__/
 *.pyd
 .pytest_cache/
 
-# SQLite Databases & Checkpoints
-data/checkpoints/*.db
+# Databases, Cache & Padron Datasets
+data/cache/*
+data/checkpoints/*
 *.db
+*.zip
+*.txt
 
 # Output exports & logs
 output/exports/*.xlsx

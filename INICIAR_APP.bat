@@ -22,7 +22,7 @@ if %errorlevel% neq 0 (
 )
 
 echo.
-echo [2/2] Lanzando aplicacion Streamlit...
+echo [2/2] Lanzando aplicacion en el navegador predeterminado...
 streamlit run app.py
 
 pause

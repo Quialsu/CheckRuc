@@ -16,18 +16,19 @@ CACHE_DIR = DATA_DIR / "cache"
 CHECKPOINT_DIR = DATA_DIR / "checkpoints"
 
 DB_PATH = CHECKPOINT_DIR / "consultas.db"
+PADRON_CACHE_DB = CACHE_DIR / "padron_reducido.db"
 DEFAULT_EXCEL_OUTPUT = EXPORTS_DIR / "Consulta_RUC_SUNAT.xlsx"
 
 # Settings
-BATCH_SIZE = 100
+BATCH_SIZE = 1000
 MAX_RETRIES = 3
 INITIAL_BACKOFF = 1.0  # seconds
 TIMEOUT = 10.0  # seconds
-PAUSE_BETWEEN_BATCHES = 0.5  # seconds
+PAUSE_BETWEEN_BATCHES = 0.01  # seconds
 
 LOG_LEVEL = "INFO"
 LOG_FILE = LOGS_DIR / "app.log"
 
-# Ensue directories exist
+# Ensure directories exist
 for directory in [INPUT_DIR, OUTPUT_DIR, CONSULTAS_DIR, EXPORTS_DIR, LOGS_DIR, DATA_DIR, CACHE_DIR, CHECKPOINT_DIR]:
     os.makedirs(directory, exist_ok=True)

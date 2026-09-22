@@ -30,13 +30,14 @@ def export_to_excel(results: List[Dict[str, Any]],
                     invalid_records: List[Dict[str, Any]],
                     duplicate_records: List[Dict[str, Any]],
                     summary_stats: Dict[str, Any],
+                    all_input_rucs: Optional[List[str]] = None,
                     output_path: str = str(DEFAULT_EXCEL_OUTPUT)) -> str:
     """
     Generates the final multi-tab Excel file 'Consulta_RUC_SUNAT.xlsx' with:
       - RESULTADOS: Main records with all 17 compulsory columns formatted as text.
-      - PENDIENTES: Unprocessed or pending RUCs.
-      - ERRORES: Invalid RUCs, duplicates, and technical query errors.
-      - RESUMEN: Executive overview table with total stats and query source.
+      - PENDIENTES: Unprocessed or pending RUCs (guaranteeing ALL pending valid RUCs are present).
+      - ERRORES: Invalid RUCs, empty cells, duplicates, and technical query errors with row traceability.
+      - RESUMEN: Executive overview table with total stats, timestamp, and query source version.
     """
     dir_name = os.path.dirname(output_path)
     if dir_name:
@@ -44,7 +45,7 @@ def export_to_excel(results: List[Dict[str, Any]],
 
     wb = openpyxl.Workbook()
 
-    # Define Styles
+    # Styles
     header_fill = PatternFill(start_color="1F4E79", end_color="1F4E79", fill_type="solid")
     header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
     data_font = Font(name="Calibri", size=10)
@@ -69,9 +70,10 @@ def export_to_excel(results: List[Dict[str, Any]],
         cell.font = header_font
         cell.alignment = Alignment(horizontal="center", vertical="center")
 
-    processed_results = [r for r in results if r.get("estado_consulta") in ["CONSULTADO", "RUC NO ENCONTRADO", "REQUIERE REVISIÓN"]]
+    processed_map = {r["ruc"]: r for r in results if r.get("estado_consulta") in ["CONSULTADO", "RUC NO ENCONTRADO"]}
 
-    for row_idx, r in enumerate(processed_results, start=2):
+    row_idx = 2
+    for r in processed_map.values():
         row_data = [
             str(r.get("ruc", "")),
             str(r.get("razon_social", "")),
@@ -85,25 +87,23 @@ def export_to_excel(results: List[Dict[str, Any]],
             str(r.get("departamento", "") if "departamento" in r else r.get("departamento/región", "")),
             str(r.get("ubigeo", "")),
             str(r.get("comercio_exterior", "")),
-            str(r.get("actividad_principal", "") if "actividad_principal" in r else r.get("actividad económica principal", "")),
-            str(r.get("actividades_secundarias", "") if "actividades_secundarias" in r else r.get("actividades económicas", "")),
+            str(r.get("actividad_principal", "")),
+            str(r.get("actividades_secundarias", "")),
             str(r.get("fuente", "")),
             str(r.get("fecha_consulta", "")),
             str(r.get("estado_consulta", ""))
         ]
         ws_res.append(row_data)
 
-        # Apply text formatting to RUC and styling
-        cell_ruc = ws_res.cell(row=row_idx, column=1)
-        cell_ruc.number_format = '@'
-
+        ws_res.cell(row=row_idx, column=1).number_format = '@'
         for c in range(1, len(PRIMARY_COLUMNS) + 1):
             cell = ws_res.cell(row=row_idx, column=c)
             cell.font = data_font
             cell.border = thin_border
+        row_idx += 1
 
     ws_res.freeze_panes = "A2"
-    ws_res.auto_filter.ref = f"A1:{get_column_letter(len(PRIMARY_COLUMNS))}{max(len(processed_results)+1, 1)}"
+    ws_res.auto_filter.ref = f"A1:{get_column_letter(len(PRIMARY_COLUMNS))}{max(len(processed_map)+1, 1)}"
 
     # -------------------------------------------------------------
     # TAB 2: PENDIENTES
@@ -119,15 +119,18 @@ def export_to_excel(results: List[Dict[str, Any]],
         cell.font = header_font
         cell.alignment = Alignment(horizontal="center", vertical="center")
 
-    pending_records = [r for r in results if r.get("estado_consulta") not in ["CONSULTADO", "RUC NO ENCONTRADO", "REQUIERE REVISIÓN"]]
-    for row_idx, r in enumerate(pending_records, start=2):
-        ws_pen.append([str(r.get("ruc", "")), str(r.get("estado_consulta", "PENDIENTE")), str(r.get("error_tecnico", "Pendiente de procesamiento"))])
-        cell_ruc = ws_pen.cell(row=row_idx, column=1)
-        cell_ruc.number_format = '@'
+    all_input_rucs = all_input_rucs or []
+    pending_rucs = [r for r in all_input_rucs if r not in processed_map]
+
+    pen_idx = 2
+    for ruc in pending_rucs:
+        ws_pen.append([str(ruc), "PENDIENTE", "Pendiente de procesamiento / interrupción"])
+        ws_pen.cell(row=pen_idx, column=1).number_format = '@'
         for c in range(1, len(pen_cols) + 1):
-            cell = ws_pen.cell(row=row_idx, column=c)
+            cell = ws_pen.cell(row=pen_idx, column=c)
             cell.font = data_font
             cell.border = thin_border
+        pen_idx += 1
 
     ws_pen.freeze_panes = "A2"
 
@@ -136,7 +139,7 @@ def export_to_excel(results: List[Dict[str, Any]],
     # -------------------------------------------------------------
     ws_err = wb.create_sheet(title="ERRORES")
     ws_err.views.sheetView[0].showGridLines = True
-    err_cols = ["Tipo Error", "Fila / RUC", "Valor Original", "Motivo Técnico"]
+    err_cols = ["Tipo Error", "Archivo", "Fila Origen", "Valor Original", "Motivo Técnico"]
     ws_err.append(err_cols)
     for c in range(1, len(err_cols) + 1):
         cell = ws_err.cell(row=1, column=c)
@@ -146,7 +149,7 @@ def export_to_excel(results: List[Dict[str, Any]],
 
     err_row_idx = 2
     for inv in invalid_records:
-        ws_err.append(["RUC Inválido", f"Fila {inv.get('fila', '-')}", str(inv.get('ruc_original', '')), str(inv.get('motivo', ''))])
+        ws_err.append(["RUC Inválido / Celda Vacía", str(inv.get('archivo', '-')), f"Fila {inv.get('fila', '-')}", str(inv.get('ruc_original', '')), str(inv.get('motivo', ''))])
         for c in range(1, len(err_cols) + 1):
             cell = ws_err.cell(row=err_row_idx, column=c)
             cell.font = data_font
@@ -154,7 +157,7 @@ def export_to_excel(results: List[Dict[str, Any]],
         err_row_idx += 1
 
     for dup in duplicate_records:
-        ws_err.append(["Duplicado Omite", f"Fila {dup.get('fila', '-')}", str(dup.get('ruc_original', '')), str(dup.get('motivo', ''))])
+        ws_err.append(["Duplicado Omite", str(dup.get('archivo', '-')), f"Fila {dup.get('fila', '-')}", str(dup.get('ruc_original', '')), str(dup.get('motivo', ''))])
         for c in range(1, len(err_cols) + 1):
             cell = ws_err.cell(row=err_row_idx, column=c)
             cell.font = data_font
@@ -163,7 +166,7 @@ def export_to_excel(results: List[Dict[str, Any]],
 
     for r in results:
         if r.get("estado_consulta") in ["ERROR TEMPORAL", "REQUIERE REVISIÓN"]:
-            ws_err.append(["Error Consulta", str(r.get('ruc', '')), str(r.get('ruc', '')), str(r.get('error_tecnico', ''))])
+            ws_err.append(["Error Consulta", "-", "-", str(r.get('ruc', '')), str(r.get('error_tecnico', ''))])
             for c in range(1, len(err_cols) + 1):
                 cell = ws_err.cell(row=err_row_idx, column=c)
                 cell.font = data_font
@@ -190,9 +193,10 @@ def export_to_excel(results: List[Dict[str, Any]],
         ("RUCs Consultados Exitosos", summary_stats.get("consultados", 0)),
         ("RUCs No Encontrados", summary_stats.get("no_encontrados", 0)),
         ("RUCs con Error / Requieren Revisión", summary_stats.get("errores", 0)),
-        ("RUCs Pendientes", summary_stats.get("pendientes", 0)),
+        ("RUCs Pendientes", len(pending_rucs)),
         ("Fecha / Hora Procesamiento", summary_stats.get("fecha_hora", "")),
-        ("Fuente Utilizada", summary_stats.get("fuente", ""))
+        ("Fuente Utilizada", summary_stats.get("fuente", "")),
+        ("Versión de Dataset", summary_stats.get("dataset_ver", ""))
     ]
 
     for row_idx, (k, v) in enumerate(summary_rows, start=2):
@@ -204,7 +208,6 @@ def export_to_excel(results: List[Dict[str, Any]],
         cell_k.border = thin_border
         cell_v.border = thin_border
 
-    # Adjust Column Widths Across Sheets
     for sheet in wb.worksheets:
         for col in sheet.columns:
             max_len = max(len(str(cell.value or '')) for cell in col)

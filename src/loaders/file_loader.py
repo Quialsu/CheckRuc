@@ -6,15 +6,16 @@ def load_ruc_file(file_path_or_buffer, file_name: Optional[str] = None) -> Tuple
     """
     Loads an Excel (.xlsx, .xls) or CSV (.csv, .txt) file into a pandas DataFrame.
     Guarantees all columns are read as string / object dtype to avoid numeric distortion.
+    DOES NOT silently drop empty rows.
     Returns: (df, list_of_column_names)
     """
     name = file_name or (file_path_or_buffer if isinstance(file_path_or_buffer, str) else getattr(file_path_or_buffer, 'name', 'file.csv'))
     ext = os.path.splitext(name)[1].lower()
 
     if ext in ['.xlsx', '.xls']:
-        df = pd.read_excel(file_path_or_buffer, dtype=str)
+        engine = 'openpyxl' if ext == '.xlsx' else 'xlrd'
+        df = pd.read_excel(file_path_or_buffer, dtype=str, engine=engine)
     elif ext in ['.csv', '.txt']:
-        # Try default comma/semicolon, fallback to python engine
         try:
             df = pd.read_csv(file_path_or_buffer, dtype=str)
         except Exception:
@@ -24,20 +25,31 @@ def load_ruc_file(file_path_or_buffer, file_name: Optional[str] = None) -> Tuple
     else:
         raise ValueError(f"Formato de archivo no soportado: {ext}. Utilice .xlsx, .xls, .csv o .txt.")
 
-    # Clean column names (strip whitespace)
     df.columns = [str(col).strip() for col in df.columns]
     return df, list(df.columns)
 
 
-def extract_ruc_column(df: pd.DataFrame, column_name: str) -> List[str]:
+def extract_ruc_records_with_trace(df: pd.DataFrame, column_name: str, file_name: str = "entrada") -> List[Dict[str, Any]]:
     """
-    Extracts the RUC values from the specified column as a list of strings.
+    Extracts RUC values with full traceability per row (preserving empty cells instead of dropna).
     """
     if column_name not in df.columns:
         raise KeyError(f"La columna '{column_name}' no existe en el archivo. Columnas disponibles: {list(df.columns)}")
 
-    raw_series = df[column_name].dropna().astype(str)
-    return raw_series.tolist()
+    records = []
+    series = df[column_name]
+
+    for idx, raw_val in enumerate(series):
+        row_num = idx + 2  # 1-based header is row 1
+        raw_str = str(raw_val) if pd.notna(raw_val) else ""
+        records.append({
+            "archivo_origen": file_name,
+            "hoja_origen": "Hoja1",
+            "fila_origen": row_num,
+            "ruc_original": raw_str
+        })
+
+    return records
 
 
 def auto_detect_ruc_column(columns: List[str]) -> Optional[str]:

@@ -30,9 +30,8 @@ def validate_ruc(raw_val: Any) -> Tuple[bool, str, str]:
     Returns a tuple: (is_valid, clean_ruc, error_reason)
     """
     if raw_val is None:
-        return False, "", "Valor nulo o vacío"
+        return False, "", "Celda vacía / Nula"
 
-    # Convert float / int to string safely without scientific notation
     if isinstance(raw_val, float):
         if raw_val.is_integer():
             val_str = str(int(raw_val))
@@ -47,8 +46,8 @@ def validate_ruc(raw_val: Any) -> Tuple[bool, str, str]:
     else:
         val_str = str(raw_val).strip()
 
-    if not val_str:
-        return False, "", "Valor vacío"
+    if not val_str or val_str.lower() in ["nan", "none", "null"]:
+        return False, "", "Celda vacía"
 
     if not val_str.isdigit():
         return False, val_str, f"Contiene caracteres no numéricos: '{val_str}'"
@@ -66,27 +65,28 @@ def validate_ruc(raw_val: Any) -> Tuple[bool, str, str]:
     return True, val_str, ""
 
 
-def process_ruc_list(ruc_list: List[Any]) -> Dict[str, Any]:
+def process_ruc_records(records: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
-    Processes a list of raw RUCs:
-    - Validates each
-    - Deduplicates valid ones (preserving order)
-    - Records duplicates and invalid ones with technical reasons
+    Processes a list of raw record dicts with traceability.
     """
     valid_rucs = []
     seen_valid: Set[str] = set()
     invalid_records = []
     duplicate_records = []
 
-    for idx, raw in enumerate(ruc_list):
-        is_valid, clean_ruc, error_msg = validate_ruc(raw)
-        row_num = idx + 1
+    for rec in records:
+        raw_val = rec.get("ruc_original", "")
+        row_num = rec.get("fila_origen", "-")
+        file_name = rec.get("archivo_origen", "-")
+
+        is_valid, clean_ruc, error_msg = validate_ruc(raw_val)
 
         if is_valid:
             if clean_ruc in seen_valid:
                 duplicate_records.append({
+                    "archivo": file_name,
                     "fila": row_num,
-                    "ruc_original": str(raw),
+                    "ruc_original": str(raw_val),
                     "ruc_limpio": clean_ruc,
                     "motivo": "RUC duplicado en la lista de entrada"
                 })
@@ -95,8 +95,9 @@ def process_ruc_list(ruc_list: List[Any]) -> Dict[str, Any]:
                 valid_rucs.append(clean_ruc)
         else:
             invalid_records.append({
+                "archivo": file_name,
                 "fila": row_num,
-                "ruc_original": str(raw),
+                "ruc_original": str(raw_val),
                 "ruc_limpio": clean_ruc,
                 "motivo": error_msg
             })
@@ -106,5 +107,5 @@ def process_ruc_list(ruc_list: List[Any]) -> Dict[str, Any]:
         "unique_count": len(valid_rucs),
         "invalid_records": invalid_records,
         "duplicate_records": duplicate_records,
-        "total_input": len(ruc_list)
+        "total_input": len(records)
     }
