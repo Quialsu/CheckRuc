@@ -1,9 +1,9 @@
+import os
 import sqlite3
 import datetime
 from typing import Dict, Any, List, Optional
 from config import DB_PATH
 
-# Terminal vs Retryable status definitions
 TERMINAL_STATUSES = {"CONSULTADO", "RUC NO ENCONTRADO"}
 RETRYABLE_STATUSES = {"ERROR TEMPORAL", "REQUIERE REVISIÓN", "REINTENTAR"}
 
@@ -50,12 +50,21 @@ class CheckpointManager:
                     PRIMARY KEY (ruc, fuente, dataset_ver)
                 )
             """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS trabajos (
+                    job_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    archivo TEXT,
+                    fuente TEXT,
+                    dataset_ver TEXT,
+                    total INTEGER,
+                    completados INTEGER,
+                    estado TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
             conn.commit()
 
     def get_processed_rucs(self, fuente: str, dataset_ver: str) -> Dict[str, Dict[str, Any]]:
-        """
-        Returns a mapping of RUC -> record for terminal status queries in this specific source & dataset version.
-        """
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
@@ -133,17 +142,24 @@ class CheckpointManager:
 
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            placeholders = ",".join("?" for _ in ruc_list)
-            query = f"""
-                SELECT estado_consulta, COUNT(*) as count
-                FROM ruc_consultas
-                WHERE ruc IN ({placeholders}) AND fuente = ? AND dataset_ver = ?
-                GROUP BY estado_consulta
-            """
-            cursor.execute(query, ruc_list + [fuente, dataset_ver])
-            rows = cursor.fetchall()
 
-            stats_map = {row["estado_consulta"]: row["count"] for row in rows}
+            # Paginated SQL query to prevent SQL parameter overflow when ruc_list > 900
+            stats_map = {}
+            chunk_size = 800
+            for i in range(0, len(ruc_list), chunk_size):
+                chunk = ruc_list[i:i + chunk_size]
+                placeholders = ",".join("?" for _ in chunk)
+                query = f"""
+                    SELECT estado_consulta, COUNT(*) as count
+                    FROM ruc_consultas
+                    WHERE ruc IN ({placeholders}) AND fuente = ? AND dataset_ver = ?
+                    GROUP BY estado_consulta
+                """
+                cursor.execute(query, chunk + [fuente, dataset_ver])
+                rows = cursor.fetchall()
+                for row in rows:
+                    st_name = row["estado_consulta"]
+                    stats_map[st_name] = stats_map.get(st_name, 0) + row["count"]
 
             consultados = stats_map.get("CONSULTADO", 0)
             no_encontrados = stats_map.get("RUC NO ENCONTRADO", 0)

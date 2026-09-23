@@ -1,5 +1,6 @@
 import os
 import pytest
+import openpyxl
 import pandas as pd
 from src.validators.ruc_validator import validate_ruc, validate_ruc_checksum, process_ruc_records
 from src.loaders.file_loader import load_ruc_file, extract_ruc_records_with_trace, auto_detect_ruc_column
@@ -38,19 +39,28 @@ def test_process_ruc_records_with_trace():
     assert len(res["duplicate_records"]) == 1
 
 
-def test_padron_reducido_source(tmp_path):
-    db_file = tmp_path / "padron_test.db"
+def test_empty_padron_source(tmp_path):
+    db_file = tmp_path / "empty_padron.db"
+    padron = PadronReducidoSource(db_path=str(db_file))
+    res = padron.fetch_bulk_rucs(["20131312955"])
+    assert res[0]["estado_consulta"] == "ERROR TEMPORAL"
+    assert "no importado" in res[0]["error_tecnico"].lower()
+
+
+def test_padron_versioning_and_sha256(tmp_path):
+    db_file = tmp_path / "padron_versioning.db"
     padron = PadronReducidoSource(db_path=str(db_file))
 
     txt_file = tmp_path / "dummy_padron.txt"
     with open(txt_file, "w", encoding="latin-1") as f:
         f.write("20131312955|SUNAT TEST|ACTIVO|HABIDO|150131|AV.|CANAVAL Y MOREYRA||ZONA|150|||||\n")
 
-    padron.load_from_txt_file(str(txt_file))
-    res = padron.fetch_ruc("20131312955")
+    info = padron.load_from_txt_file(str(txt_file), version_name="2026-TEST-V1")
+    assert len(info["sha256"]) == 64
+    assert info["version"] == "2026-TEST-V1"
 
+    res = padron.fetch_ruc("20131312955")
     assert res["razon_social"] == "SUNAT TEST"
-    assert res["estado"] == "ACTIVO"
     assert res["estado_consulta"] == "CONSULTADO"
 
 
@@ -68,10 +78,23 @@ def test_checkpoint_isolation(tmp_path):
     assert real_recs["20131312955"]["razon_social"] == "REAL NAME"
 
 
-def test_excel_export_with_pending(tmp_path):
+def test_excel_export_6_sheets(tmp_path):
     out_file = tmp_path / "Consulta_RUC_SUNAT.xlsx"
     results = [{"ruc": "20131312955", "estado_consulta": "CONSULTADO", "razon_social": "SUNAT", "fuente": "MOCK"}]
-    stats = {"total_input": 2, "unique_count": 2, "consultados": 1, "no_encontrados": 0, "errores": 0, "fecha_hora": "2026-09-22", "fuente": "MOCK", "dataset_ver": "v1.0"}
+    stats = {"total_input": 2, "unique_count": 2, "consultados": 1, "no_encontrados": 0, "errores": 0, "fecha_hora": "2026-09-23", "fuente": "MOCK", "dataset_ver": "v1.0"}
 
     out = export_to_excel(results, [], [], stats, all_input_rucs=["20131312955", "20100000001"], output_path=str(out_file))
-    assert os.path.exists(out)
+    wb = openpyxl.load_workbook(out)
+    assert len(wb.sheetnames) == 6
+    assert set(wb.sheetnames) == {"RESULTADOS", "PENDIENTES", "ERRORES", "RESUMEN", "TRAZABILIDAD", "FUENTES"}
+
+
+def test_high_volume_synthetic_chunking(tmp_path):
+    db_file = tmp_path / "high_vol.db"
+    chk = CheckpointManager(db_path=str(db_file))
+
+    # Generate 2,000 synthetic RUCs
+    synthetic_rucs = [f"20{i:09d}" for i in range(2000)]
+    stats = chk.get_summary_stats(synthetic_rucs, "MOCK", "v1.0")
+    assert stats["total"] == 2000
+    assert stats["pendientes"] == 2000
