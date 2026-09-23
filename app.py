@@ -14,7 +14,7 @@ from config import DEFAULT_EXCEL_OUTPUT, BATCH_SIZE
 st.set_page_config(page_title="Consulta RUC SUNAT Masiva", page_icon="🏢", layout="wide")
 
 st.title("🏢 Consulta RUC SUNAT - Procesamiento Masivo")
-st.markdown("Sistema profesional para la consulta, validación, reanudación y consolidación masiva de RUCs peruanos.")
+st.markdown("Aplicación profesional, independiente y modular para la consulta, validación, reanudación y consolidación masiva de RUCs peruanos.")
 
 # Session state initialization
 if "is_processing" not in st.session_state:
@@ -23,30 +23,49 @@ if "stop_requested" not in st.session_state:
     st.session_state.stop_requested = False
 
 # Sidebar Configuration
-st.sidebar.header("⚙️ Configuración")
+st.sidebar.header("⚙️ Configuración y Padrón")
 source_selection = st.sidebar.selectbox(
     "Fuente de Consulta:",
     [
         "Padrón Reducido SUNAT (Oficial Masivo)",
         "Mock / Simulación (Pruebas Isoladas)",
-        "SUNAT Web (Individual / Auxiliar)"
+        "SUNAT Web (Consulta Auxiliar / Individual)"
     ],
     index=0
 )
 
-batch_size_val = st.sidebar.number_input("Tamaño de Lote:", min_value=10, max_value=5000, value=1000, step=100)
+# Initialize Padrón Source for stats
+padron_source = PadronReducidoSource()
+padron_info = padron_source.get_dataset_info()
 
 st.sidebar.markdown("---")
-st.sidebar.info("""
-**Instrucciones:**
-1. Seleccionar la modalidad de entrada.
-2. Cargar archivo Excel/CSV o pegar RUCs.
-3. Verificar validación y deduplicación.
-4. Iniciar o reanudar el procesamiento.
-5. Descargar el reporte `Consulta_RUC_SUNAT.xlsx`.
-""")
+st.sidebar.subheader("📦 Estado del Padrón Local")
+if padron_info["registros"] > 0:
+    st.sidebar.success(f"**Cargado:** {padron_info['registros']:,} registros")
+    st.sidebar.text(f"Versión: {padron_info['version']}")
+    st.sidebar.text(f"Actualizado: {padron_info['fecha_descarga']}")
+else:
+    st.sidebar.warning("Padrón reducido local no importado.")
+
+# Import manual de padrón
+uploaded_padron = st.sidebar.file_uploader("Importar Padrón TXT Oficial (.txt)", type=["txt"])
+if uploaded_padron is not None:
+    if st.sidebar.button("📥 Importar Padrón TXT"):
+        with st.spinner("Indexando Padrón Reducido en SQLite local..."):
+            temp_path = "data/cache/temp_padron.txt"
+            os.makedirs("data/cache", exist_ok=True)
+            with open(temp_path, "wb") as f:
+                f.write(uploaded_padron.getbuffer())
+            padron_source.load_from_txt_file(temp_path, version_name=f"Manual-{uploaded_padron.name}")
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+            st.sidebar.success("¡Padrón importado e indexado correctamente!")
+            st.rerun()
+
+batch_size_val = st.sidebar.number_input("Tamaño de Lote:", min_value=10, max_value=10000, value=1000, step=500)
 
 # Input Mode
+st.subheader("1. Entrada de Datos")
 input_mode = st.radio(
     "Seleccionar Método de Entrada:",
     ["📁 Cargar Archivo Excel / CSV", "📋 Pegar RUCs Directamente"],
@@ -95,16 +114,16 @@ if records:
     try:
         val_res = process_ruc_records(records)
 
-        st.subheader("📊 Resumen de Validación de Entrada")
+        st.subheader("📊 2. Resumen de Validación y Trazabilidad")
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("TOTAL REGISTROS", val_res["total_input"])
+        m1.metric("TOTAL REGISTROS RECIBIDOS", val_res["total_input"])
         m2.metric("RUCs ÚNICOS VÁLIDOS", val_res["unique_count"])
         m3.metric("VACÍOS / INVÁLIDOS", len(val_res["invalid_records"]))
         m4.metric("DUPLICADOS OMITIDOS", len(val_res["duplicate_records"]))
 
         # Select Source Engine
         if "Padrón Reducido" in source_selection:
-            source = PadronReducidoSource()
+            source = padron_source
         elif "Mock" in source_selection:
             source = MockRUCSource()
         else:
@@ -113,7 +132,7 @@ if records:
         chk_mgr = CheckpointManager()
         stats = chk_mgr.get_summary_stats(val_res["valid_rucs"], source.source_name, source.dataset_version)
 
-        st.subheader(f"📌 Estado del Checkpoint ({source.source_name} - {source.dataset_version})")
+        st.subheader(f"📌 3. Estado del Checkpoint ({source.source_name} - {source.dataset_version})")
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("TOTAL A PROCESAR", stats["total"])
         c2.metric("CONSULTADOS", stats["consultados"])
@@ -130,7 +149,7 @@ if records:
 
         if stop_button:
             st.session_state.stop_requested = True
-            st.warning("Detención solicitada. Deteniendo proceso en el lote actual...")
+            st.warning("Detención solicitada. Finalizando lote en ejecución...")
 
         if start_button:
             st.session_state.is_processing = True
@@ -155,11 +174,11 @@ if records:
             )
 
             st.session_state.is_processing = False
-            st.success("¡Procesamiento finalizado o pausado!")
+            st.success("¡Procesamiento finalizado o pausado exitosamente!")
             st.rerun()
 
         st.markdown("---")
-        st.subheader("📥 Exportación de Resultados")
+        st.subheader("📥 4. Exportación de Resultados")
         if st.button("📄 Generar Reporte Excel Final (Consulta_RUC_SUNAT.xlsx)"):
             all_records = []
             with chk_mgr._get_connection() as conn:

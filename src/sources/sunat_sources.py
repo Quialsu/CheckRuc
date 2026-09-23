@@ -47,7 +47,8 @@ class PadronReducidoSource(BaseRUCSource):
 
     @property
     def dataset_version(self) -> str:
-        return "2026-Q3-OFICIAL"
+        info = self.get_dataset_info()
+        return info.get("version", "SIN_IMPORTAR")
 
     def _ensure_indexed(self):
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
@@ -72,21 +73,44 @@ class PadronReducidoSource(BaseRUCSource):
                 kilometro TEXT
             )
         """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS padron_metadata (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                version TEXT,
+                fecha_descarga TEXT,
+                registros INTEGER,
+                sha256 TEXT
+            )
+        """)
         conn.commit()
         conn.close()
 
-    def load_from_txt_file(self, txt_path: str):
+    def get_dataset_info(self) -> Dict[str, Any]:
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM padron_metadata WHERE id = 1")
+        row = cursor.fetchone()
+        conn.close()
+        if row:
+            return dict(row)
+        return {"version": "SIN_IMPORTAR", "fecha_descarga": "N/A", "registros": 0, "sha256": "N/A"}
+
+    def load_from_txt_file(self, txt_path: str, version_name: str = "Padrón-Manual-Oficial"):
         """
         Loads and indexes official Padrón Reducido raw TXT file into SQLite.
         """
+        now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         cursor.execute("BEGIN TRANSACTION;")
 
+        count = 0
         with open(txt_path, 'r', encoding='latin-1', errors='replace') as f:
             for line in f:
                 parts = line.strip().split('|')
                 if len(parts) >= 5 and parts[0].isdigit() and len(parts[0]) == 11:
+                    count += 1
                     cursor.execute("""
                         INSERT OR REPLACE INTO padron_reducido (
                             ruc, nombre_razon_social, estado, condicion, ubigeo,
@@ -106,6 +130,12 @@ class PadronReducidoSource(BaseRUCSource):
                         parts[13] if len(parts) > 13 else "",
                         parts[14] if len(parts) > 14 else ""
                     ))
+
+        cursor.execute("""
+            INSERT OR REPLACE INTO padron_metadata (id, version, fecha_descarga, registros, sha256)
+            VALUES (1, ?, ?, ?, ?)
+        """, (version_name, now, count, "HASH_LOCAL"))
+
         conn.commit()
         conn.close()
 
@@ -134,14 +164,13 @@ class PadronReducidoSource(BaseRUCSource):
             for ruc in chunk:
                 if ruc in found_map:
                     row = found_map[ruc]
-                    # Construct raw fiscal address string from official fields
                     raw_addr = f"{row['tipo_via']} {row['nombre_via']} {row['numero']} {row['tipo_zona']} {row['codigo_zona']}".strip()
                     parsed = parse_fiscal_address(raw_addr)
 
                     results.append({
                         "ruc": ruc,
                         "razon_social": row["nombre_razon_social"],
-                        "fecha_inscripcion": "",  # Not present in Padron Reducido
+                        "fecha_inscripcion": "",
                         "estado": row["estado"],
                         "condicion": row["condicion"],
                         "domicilio_fiscal_original": raw_addr,
