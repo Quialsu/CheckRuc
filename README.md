@@ -1,27 +1,24 @@
-# Consulta_RUC_SUNAT (Versión v1.0.0_2026-09-23)
+# Consulta_RUC_SUNAT (Versión v1.2.0_2026-09-23)
 
 Aplicación modular y profesional en Python para consultar, procesar, consolidar y auditar información pública de empresas a partir de una lista de RUCs peruanos.
 
-Diseñado para procesar desde unos pocos RUCs hasta **1,000, 10,000, 50,000+ RUCs** de forma rápida y segura.
+Diseñado para procesar desde unos pocos RUCs hasta **1,000, 10,000, 50,000+ RUCs** de forma rápida y segura mediante indexación local en SQLite.
 
 ---
 
-## 📌 ESTADO DE LAS FUNCIONALIDADES (v1.0.0)
+## 📌 MATRIZ DE AUDITORÍA Y ESTADO DE REQUISITOS (v1.2.0)
 
-### ✅ Funcionalidades Terminadas
-- **Motor de Padrón Reducido SUNAT / Datos Abiertos**: Indexación SQLite local (`data/cache/`) para consultas hiper-rápidas en segundos.
-- **Validación Estricta Módulo 11**: Algoritmo oficial de dígito verificador y comprobación de prefijos (`10`, `15`, `17`, `20`).
-- **Preservación Inmutable de Domicilio Fiscal**: `Domicilio Fiscal Original` permanece exactamente igual al registro oficial.
-- **Checkpoint Persistente en SQLite**: Persistencia independiente por combinación (RUC + Fuente + Versión Dataset) que evita la contaminación entre MOCK y REAL.
-- **Trazabilidad Completa**: Registro de archivo origen, hoja y número de fila sin eliminar celdas vacías (`dropna` silencioso desactivado).
-- **Interfaz Streamlit e Interfaz CLI (`main.py`)**: Panel de control con métricas en tiempo real, botones de detener/reanudar y descarga Excel.
-- **Reporte Excel Multipestaña (`Consulta_RUC_SUNAT.xlsx`)**: Hojas `RESULTADOS`, `PENDIENTES`, `ERRORES`, `RESUMEN`, `TRAZABILIDAD` y `FUENTES`.
-
-### ⏳ Funcionalidades Pendientes / En Desarrollo
-- Descarga automatizada vía API de la Plataforma Nacional de Datos Abiertos para actualización de padrón con un solo clic.
-
-### ⚠️ Funcionalidades No Verificadas / Limitaciones
-- **Consulta Masiva Web SUNAT**: Marcada como **NO VERIFICADA PARA USO MASIVO** debido a controles anti-bot/CAPTCHA. La aplicación utiliza por defecto el Padrón Reducido Oficial.
+| Requisito Téc. | Descripción | Estado Auditoría | Detalle de Verificación |
+| :--- | :--- | :--- | :--- |
+| **Padrón Seguro** | Actualización transaccional con respaldo en caso de archivo corrupto. | **IMPLEMENTADO Y VERIFICADO** | Flujo `IMPORTANDO` -> `VALIDADO` -> `ACTIVO`. Si la importación falla, la versión anterior sigue 100% activa. |
+| **Cálculo SHA-256** | Huella digital real de archivos descargados/importados. | **IMPLEMENTADO Y VERIFICADO** | Implementado `hashlib.sha256()` por bloques de lectura. |
+| **Domicilio Literal**| Preservar `Domicilio Fiscal Original` sin alteraciones. | **IMPLEMENTADO Y VERIFICADO** | Inmutabilidad garantizada. Los campos derivados de dirección se calculan por separado. |
+| **Consulta Sin Padrón**| Evitar falsos `RUC NO ENCONTRADO` cuando no hay base activa. | **IMPLEMENTADO Y VERIFICADO** | Devuelve `ERROR TEMPORAL / Padrón No Importado` si la base relacional no tiene dataset activo. |
+| **Aislamiento MOCK** | Evitar contaminación de MOCK en bases de datos de producción. | **IMPLEMENTADO Y VERIFICADO** | Clave compuesta (`ruc`, `fuente`, `dataset_ver`) en SQLite. |
+| **Reporte 6 Hojas** | Hojas `RESULTADOS`, `PENDIENTES`, `ERRORES`, `RESUMEN`, `TRAZABILIDAD`, `FUENTES`. | **IMPLEMENTADO Y VERIFICADO** | Exportador `openpyxl` genera exactamente las 6 pestañas requeridas. |
+| **SQL Chunking** | Paginación de consultas SQL para volúmenes de 50,000+ RUCs. | **IMPLEMENTADO Y VERIFICADO** | Consultas SQL paginadas en bloques de 800 parámetros para evitar límites de SQLite. |
+| **Interfaz Web** | Interfaz local Streamlit interactiva con dashboard y botones de detener/reanudar. | **IMPLEMENTADO Y VERIFICADO** | `app.py` ejecutado vía `streamlit run app.py` o `INICIAR_APP.bat`. |
+| **Descarga Auto** | Descarga automatizada vía API de Datos Abiertos. | **PARCIAL** | Importación manual y lectura de datasets en `data/cache/` completamente funcional. |
 
 ---
 

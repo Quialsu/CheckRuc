@@ -39,6 +39,8 @@ class PadronReducidoSource(BaseRUCSource):
     """
     Official SUNAT Padrón Reducido Local Source (Versioned Relational SQLite Engine).
     Indexes 1k, 10k, and 50k+ RUC lookups locally in sub-seconds with SHA-256 verification.
+    Guarantees atomic dataset updates: IMPORTANDO -> VALIDADO -> ACTIVO.
+    If an import fails or is empty, previous active dataset stays 100% operational.
     """
     def __init__(self, db_path: str = str(PADRON_CACHE_DB)):
         self.db_path = db_path
@@ -94,6 +96,9 @@ class PadronReducidoSource(BaseRUCSource):
         conn.commit()
         conn.close()
 
+    def get_dataset_info(self) -> Dict[str, Any]:
+        return self.get_active_dataset_info()
+
     def get_active_dataset_info(self) -> Dict[str, Any]:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
@@ -117,57 +122,70 @@ class PadronReducidoSource(BaseRUCSource):
         return sha256.hexdigest()
 
     def load_from_txt_file(self, txt_path: str, version_name: Optional[str] = None) -> Dict[str, Any]:
-        """
-        Calculates real SHA-256 hash, imports raw TXT dataset, and activates it via a single atomic transaction.
-        """
         now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         sha256_hash = self.calculate_file_sha256(txt_path)
         v_name = version_name or f"Oficial-{sha256_hash[:8]}"
 
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        cursor.execute("BEGIN TRANSACTION;")
 
-        # Deactivate previous active datasets safely
-        cursor.execute("UPDATE datasets SET estado = 'INACTIVO' WHERE estado = 'ACTIVO'")
+        try:
+            cursor.execute("BEGIN TRANSACTION;")
 
-        cursor.execute("""
-            INSERT INTO datasets (fuente, version, fecha_descarga, sha256, registros, estado)
-            VALUES (?, ?, ?, ?, ?, 'ACTIVO')
-        """, (self.source_name, v_name, now, sha256_hash, 0))
-        dataset_id = cursor.lastrowid
+            # 1. Register temporary importing dataset
+            cursor.execute("""
+                INSERT INTO datasets (fuente, version, fecha_descarga, sha256, registros, estado)
+                VALUES (?, ?, ?, ?, ?, 'IMPORTANDO')
+            """, (self.source_name, v_name, now, sha256_hash, 0))
+            dataset_id = cursor.lastrowid
 
-        count = 0
-        with open(txt_path, 'r', encoding='latin-1', errors='replace') as f:
-            for line in f:
-                parts = line.strip().split('|')
-                if len(parts) >= 5 and parts[0].isdigit() and len(parts[0]) == 11:
-                    count += 1
-                    cursor.execute("""
-                        INSERT OR REPLACE INTO padron_registros (
-                            dataset_id, ruc, nombre_razon_social, estado, condicion, ubigeo,
-                            tipo_via, nombre_via, codigo_zona, tipo_zona, numero,
-                            interior, lote, departamento_int, manzana, kilometro
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (
-                        dataset_id, parts[0], parts[1], parts[2], parts[3], parts[4],
-                        parts[5] if len(parts) > 5 else "",
-                        parts[6] if len(parts) > 6 else "",
-                        parts[7] if len(parts) > 7 else "",
-                        parts[8] if len(parts) > 8 else "",
-                        parts[9] if len(parts) > 9 else "",
-                        parts[10] if len(parts) > 10 else "",
-                        parts[11] if len(parts) > 11 else "",
-                        parts[12] if len(parts) > 12 else "",
-                        parts[13] if len(parts) > 13 else "",
-                        parts[14] if len(parts) > 14 else ""
-                    ))
+            # 2. Read and parse TXT file into candidate dataset
+            count = 0
+            with open(txt_path, 'r', encoding='latin-1', errors='replace') as f:
+                for line in f:
+                    parts = line.strip().split('|')
+                    if len(parts) >= 5 and parts[0].isdigit() and len(parts[0]) == 11:
+                        count += 1
+                        cursor.execute("""
+                            INSERT OR REPLACE INTO padron_registros (
+                                dataset_id, ruc, nombre_razon_social, estado, condicion, ubigeo,
+                                tipo_via, nombre_via, codigo_zona, tipo_zona, numero,
+                                interior, lote, departamento_int, manzana, kilometro
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (
+                            dataset_id, parts[0], parts[1], parts[2], parts[3], parts[4],
+                            parts[5] if len(parts) > 5 else "",
+                            parts[6] if len(parts) > 6 else "",
+                            parts[7] if len(parts) > 7 else "",
+                            parts[8] if len(parts) > 8 else "",
+                            parts[9] if len(parts) > 9 else "",
+                            parts[10] if len(parts) > 10 else "",
+                            parts[11] if len(parts) > 11 else "",
+                            parts[12] if len(parts) > 12 else "",
+                            parts[13] if len(parts) > 13 else "",
+                            parts[14] if len(parts) > 14 else ""
+                        ))
 
-        cursor.execute("UPDATE datasets SET registros = ? WHERE dataset_id = ?", (count, dataset_id))
-        conn.commit()
-        conn.close()
+            # 3. Validation: Must have at least 1 valid record
+            if count == 0:
+                raise ValueError("El archivo del padrón no contiene ningún registro de RUC válido.")
 
-        return {"dataset_id": dataset_id, "version": v_name, "sha256": sha256_hash, "registros": count}
+            # 4. Activate new dataset and deactivate previous ones atomically
+            cursor.execute("UPDATE datasets SET estado = 'INACTIVO' WHERE estado = 'ACTIVO'")
+            cursor.execute("UPDATE datasets SET registros = ?, estado = 'ACTIVO' WHERE dataset_id = ?", (count, dataset_id))
+
+            conn.commit()
+            conn.close()
+
+            return {"dataset_id": dataset_id, "version": v_name, "sha256": sha256_hash, "registros": count}
+
+        except Exception as e:
+            try:
+                conn.rollback()
+                conn.close()
+            except Exception:
+                pass
+            raise RuntimeError(f"Error durante la importación del padrón. Se conserva la versión previa: {str(e)}")
 
     def fetch_ruc(self, ruc: str) -> Dict[str, Any]:
         res = self.fetch_bulk_rucs([ruc])
@@ -182,7 +200,6 @@ class PadronReducidoSource(BaseRUCSource):
         dataset_id = active_info.get("dataset_id", 0)
 
         # MANDATORY AUDIT RULE: If no valid dataset is installed, return ERROR TEMPORAL / PADRON NO DISPONIBLE
-        # Never confuse missing database with non-existent company ("RUC NO ENCONTRADO").
         if dataset_id == 0 or not self.is_available():
             return [{
                 "ruc": ruc,

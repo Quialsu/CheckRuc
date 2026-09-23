@@ -1,13 +1,13 @@
-# Guía para Agentes - Consulta_RUC_SUNAT (Versión v1.0.0_2026-09-23)
+# Guía para Agentes - Consulta_RUC_SUNAT (Versión v1.2.0_2026-09-23)
 
 Este repositorio contiene la solución modular para consulta masiva, validación, reanudación y consolidación de RUCs de SUNAT (Perú).
 
 ## Identificación de Versión de Entrega
 
 - **Nombre del Proyecto:** Consulta_RUC_SUNAT
-- **Versión Actual:** `v1.0.0`
+- **Versión Actual:** `v1.2.0`
 - **Fecha de Entrega:** `2026-09-23`
-- **Formato de Empaquetado:** `Consulta_RUC_SUNAT_v1.0.0_2026-09-23.zip`
+- **Formato de Empaquetado:** `Consulta_RUC_SUNAT_v1.2.0_2026-09-23.zip`
 
 ## Reglas Clave de Desarrollo
 

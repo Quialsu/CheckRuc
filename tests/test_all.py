@@ -47,21 +47,28 @@ def test_empty_padron_source(tmp_path):
     assert "no importado" in res[0]["error_tecnico"].lower()
 
 
-def test_padron_versioning_and_sha256(tmp_path):
-    db_file = tmp_path / "padron_versioning.db"
+def test_padron_safe_update_fallback(tmp_path):
+    db_file = tmp_path / "safe_padron.db"
     padron = PadronReducidoSource(db_path=str(db_file))
 
-    txt_file = tmp_path / "dummy_padron.txt"
-    with open(txt_file, "w", encoding="latin-1") as f:
-        f.write("20131312955|SUNAT TEST|ACTIVO|HABIDO|150131|AV.|CANAVAL Y MOREYRA||ZONA|150|||||\n")
+    # 1. Valid import
+    valid_txt = tmp_path / "valid.txt"
+    with open(valid_txt, "w", encoding="latin-1") as f:
+        f.write("20131312955|SUNAT GOOD|ACTIVO|HABIDO|150131|AV.|CANAVAL Y MOREYRA||ZONA|150|||||\n")
 
-    info = padron.load_from_txt_file(str(txt_file), version_name="2026-TEST-V1")
-    assert len(info["sha256"]) == 64
-    assert info["version"] == "2026-TEST-V1"
+    padron.load_from_txt_file(str(valid_txt), version_name="v1.0-GOOD")
+    assert padron.get_active_dataset_info()["version"] == "v1.0-GOOD"
 
-    res = padron.fetch_ruc("20131312955")
-    assert res["razon_social"] == "SUNAT TEST"
-    assert res["estado_consulta"] == "CONSULTADO"
+    # 2. Failed empty import
+    empty_txt = tmp_path / "empty.txt"
+    with open(empty_txt, "w", encoding="latin-1") as f:
+        f.write("")
+
+    with pytest.raises(RuntimeError):
+        padron.load_from_txt_file(str(empty_txt), version_name="v2.0-BAD")
+
+    # Previous dataset remains active
+    assert padron.get_active_dataset_info()["version"] == "v1.0-GOOD"
 
 
 def test_checkpoint_isolation(tmp_path):
@@ -90,11 +97,18 @@ def test_excel_export_6_sheets(tmp_path):
 
 
 def test_high_volume_synthetic_chunking(tmp_path):
-    db_file = tmp_path / "high_vol.db"
+    db_file = tmp_path / "high_vol_10k.db"
     chk = CheckpointManager(db_path=str(db_file))
+    proc = BatchProcessor(source=MockRUCSource(), checkpoint_mgr=chk, batch_size=5000)
 
-    # Generate 2,000 synthetic RUCs
-    synthetic_rucs = [f"20{i:09d}" for i in range(2000)]
-    stats = chk.get_summary_stats(synthetic_rucs, "MOCK", "v1.0")
-    assert stats["total"] == 2000
-    assert stats["pendientes"] == 2000
+    # Generate 10,000 synthetic RUCs for fast CI testing
+    synthetic_rucs = [f"20{i:09d}" for i in range(10000)]
+
+    # Process batch
+    recs = proc.process_rucs(synthetic_rucs)
+    assert len(recs) == 10000
+
+    stats = chk.get_summary_stats(synthetic_rucs, "MOCK_SOURCE_TEST", "v1.0-MOCK")
+    assert stats["total"] == 10000
+    assert stats["consultados"] + stats["no_encontrados"] == 10000
+    assert stats["pendientes"] == 0

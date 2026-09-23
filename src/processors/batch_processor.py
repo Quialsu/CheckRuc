@@ -15,6 +15,7 @@ logging.basicConfig(
 class BatchProcessor:
     """
     High-performance batch processor supporting local indexed padrón searches (50,000+ RUCs in seconds).
+    Paginates final database queries to prevent SQL parameter limits.
     """
     def __init__(self,
                  source: Optional[BaseRUCSource] = None,
@@ -63,16 +64,18 @@ class BatchProcessor:
             if self.pause_between_batches > 0:
                 time.sleep(self.pause_between_batches)
 
-        # Retrieve full merged records from checkpoint DB
+        # Retrieve full merged records from checkpoint DB using paginated chunks (max 800 parameters)
         all_records = []
         with self.checkpoint_mgr._get_connection() as conn:
             cursor = conn.cursor()
-            placeholders = ",".join("?" for _ in ruc_list)
-            if placeholders:
+            chunk_size = 800
+            for i in range(0, len(ruc_list), chunk_size):
+                chunk = ruc_list[i:i + chunk_size]
+                placeholders = ",".join("?" for _ in chunk)
                 cursor.execute(
                     f"SELECT * FROM ruc_consultas WHERE ruc IN ({placeholders}) AND fuente = ? AND dataset_ver = ?",
-                    ruc_list + [source_name, dataset_ver]
+                    chunk + [source_name, dataset_ver]
                 )
-                all_records = [dict(row) for row in cursor.fetchall()]
+                all_records.extend([dict(row) for row in cursor.fetchall()])
 
         return all_records
